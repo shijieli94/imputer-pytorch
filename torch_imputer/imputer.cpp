@@ -2,28 +2,29 @@
 
 #include <tuple>
 
-std::tuple<torch::Tensor, torch::Tensor>
-imputer_loss_op(const torch::Tensor &log_probs, const torch::Tensor &targets,
-                const torch::Tensor &force_emits, at::IntArrayRef input_lengths,
-                at::IntArrayRef target_lengths, int64_t BLANK,
-                bool zero_infinity);
+#include "imputer.h"
 
-torch::Tensor imputer_loss_backward_op(
-    const torch::Tensor &grad, const torch::Tensor &log_probs,
-    const torch::Tensor &targets, const torch::Tensor &force_emits,
-    at::IntArrayRef input_lengths, at::IntArrayRef target_lengths,
-    const torch::Tensor &neg_log_likelihood, const torch::Tensor &log_alpha,
-    int64_t BLANK, bool zero_infinity);
-
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
-best_alignment_op(const torch::Tensor &log_probs, const torch::Tensor &targets,
-                  at::IntArrayRef input_lengths, at::IntArrayRef target_lengths,
-                  int64_t BLANK, bool zero_infinity);
+#define CHECK_CUDA(x) \
+  TORCH_CHECK(x.type().is_cuda(), #x " must be a CUDA tensor")
+#define CHECK_CONTIGUOUS(x) \
+  TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
+#define CHECK_INPUT(x) \
+  CHECK_CUDA(x);       \
+  CHECK_CONTIGUOUS(x)
 
 std::tuple<torch::Tensor, torch::Tensor> imputer_loss(
-    const torch::Tensor &log_probs, const torch::Tensor &targets,
-    const torch::Tensor &force_emits, const torch::Tensor &input_lengths,
-    const torch::Tensor &target_lengths, int64_t BLANK, bool zero_infinity) {
+    const torch::Tensor &log_probs,
+    const torch::Tensor &targets,
+    const torch::Tensor &force_emits,
+    const torch::Tensor &input_lengths,
+    const torch::Tensor &target_lengths,
+    int64_t BLANK,
+    bool zero_infinity) {
+  CHECK_INPUT(log_probs)
+  CHECK_INPUT(targets)
+  CHECK_INPUT(force_emits)
+  CHECK_INPUT(input_lengths)
+  CHECK_INPUT(target_lengths)
   torch::Tensor ilc =
       input_lengths.to(at::Device(at::kCPU), at::kLong).contiguous();
   torch::Tensor tlc =
@@ -40,11 +41,24 @@ std::tuple<torch::Tensor, torch::Tensor> imputer_loss(
 }
 
 torch::Tensor imputer_loss_backward(
-    const torch::Tensor &grad, const torch::Tensor &log_probs,
-    const torch::Tensor &targets, const torch::Tensor &force_emits,
-    const torch::Tensor &input_lengths, const torch::Tensor &target_lengths,
-    const torch::Tensor &neg_log_likelihood, const torch::Tensor &log_alpha,
-    int64_t BLANK, bool zero_infinity) {
+    const torch::Tensor &grad,
+    const torch::Tensor &log_probs,
+    const torch::Tensor &targets,
+    const torch::Tensor &force_emits,
+    const torch::Tensor &input_lengths,
+    const torch::Tensor &target_lengths,
+    const torch::Tensor &neg_log_likelihood,
+    const torch::Tensor &log_alpha,
+    int64_t BLANK,
+    bool zero_infinity) {
+  CHECK_INPUT(grad)
+  CHECK_INPUT(log_probs)
+  CHECK_INPUT(targets)
+  CHECK_INPUT(force_emits)
+  CHECK_INPUT(input_lengths)
+  CHECK_INPUT(target_lengths)
+  CHECK_INPUT(neg_log_likelihood)
+  CHECK_INPUT(log_alpha)
   torch::Tensor ilc =
       input_lengths.to(at::Device(at::kCPU), at::kLong).contiguous();
   torch::Tensor tlc =
@@ -63,10 +77,16 @@ torch::Tensor imputer_loss_backward(
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
-best_alignment(const torch::Tensor &log_probs, const torch::Tensor &targets,
+best_alignment(const torch::Tensor &log_probs,
+               const torch::Tensor &targets,
                const torch::Tensor &input_lengths,
-               const torch::Tensor &target_lengths, int64_t BLANK,
+               const torch::Tensor &target_lengths,
+               int64_t BLANK,
                bool zero_infinity) {
+  CHECK_INPUT(log_probs)
+  CHECK_INPUT(targets)
+  CHECK_INPUT(input_lengths)
+  CHECK_INPUT(target_lengths)
   torch::Tensor ilc =
       input_lengths.to(at::Device(at::kCPU), at::kLong).contiguous();
   torch::Tensor tlc =

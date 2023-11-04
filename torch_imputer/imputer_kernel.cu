@@ -21,6 +21,8 @@
 #include <numeric>
 #include <type_traits>
 
+#include "imputer.h"
+
 using namespace at;
 
 // this ad-hoc converts from targets (l in [1]) to augmented targets (l' in [1])
@@ -224,10 +226,14 @@ C10_LAUNCH_BOUNDS_2((std::is_same<scalar_t, float>::value ? 1024 : 896), 1)
 // (currently, might change to (log_alpha+log_beta) to be passed to the
 // backward. The dispatch function will only return the loss.
 template <typename scalar_t, ScalarType target_scalar_type>
-std::tuple<Tensor, Tensor>
-imputer_loss_gpu_template(const Tensor &log_probs, const Tensor &targets,
-                          const Tensor &force_emits, IntArrayRef input_lengths,
-                          IntArrayRef target_lengths, int64_t BLANK) {
+std::tuple<torch::Tensor, torch::Tensor>
+imputer_loss_gpu_template(
+    const torch::Tensor &log_probs,
+    const torch::Tensor &targets,
+    const torch::Tensor &force_emits,
+    at::IntArrayRef input_lengths,
+    at::IntArrayRef target_lengths,
+    int64_t BLANK) {
   // log_probs: input_len x batch_size x num_labels
   // targets [int64]: batch_size x target_length OR sum(target_lengths)
   CheckedFrom c = "imputer_loss_gpu";
@@ -297,10 +303,10 @@ imputer_loss_gpu_template(const Tensor &log_probs, const Tensor &targets,
       at::tensor(input_lengths, targets.options().dtype(kLong));
   tg_batch_offsets = tg_batch_offsets.cuda();
 
-  Tensor log_alpha =
+  torch::Tensor log_alpha =
       at::empty({batch_size, log_probs.size(0), 2 * max_target_length + 1},
                 log_probs.options());
-  Tensor neg_log_likelihood = at::empty({batch_size}, log_probs.options());
+  torch::Tensor neg_log_likelihood = at::empty({batch_size}, log_probs.options());
 
   // Very likely, we could be more clever here, e.g. learning (or genralizing
   // and reusing) from SoftMax.cu...
@@ -329,7 +335,7 @@ imputer_loss_gpu_template(const Tensor &log_probs, const Tensor &targets,
           log_alpha.stride(0), log_alpha.stride(1), log_alpha.stride(2),
           tg_batch_offsets.data_ptr<int64_t>(), tg_target_stride, batch_size,
           BLANK);
-  THCudaCheck(cudaGetLastError()); // catch launch errors
+  C10_CUDA_CHECK(cudaGetLastError()); // catch launch errors
   return std::make_tuple(neg_log_likelihood, log_alpha);
 }
 
@@ -671,11 +677,17 @@ C10_LAUNCH_BOUNDS_2((std::is_same<scalar_t, float>::value ? 1024 : 896), 1)
 // We don't do a lot of checking as we envision this to be called only when
 // backpropagating through a (well-checked) forward.
 template <typename scalar_t, ScalarType target_scalar_type>
-Tensor imputer_loss_backward_gpu_template(
-    const Tensor &grad_out, const Tensor &log_probs, const Tensor &targets,
-    const Tensor &force_emits, IntArrayRef input_lengths,
-    IntArrayRef target_lengths, const Tensor &neg_log_likelihood,
-    const Tensor &log_alpha, int64_t BLANK, bool zero_infinity) {
+torch::Tensor imputer_loss_backward_gpu_template(
+    const torch::Tensor &grad_out,
+    const torch::Tensor &log_probs,
+    const torch::Tensor &targets,
+    const torch::Tensor &force_emits,
+    at::IntArrayRef input_lengths,
+    at::IntArrayRef target_lengths,
+    const torch::Tensor &neg_log_likelihood,
+    const torch::Tensor &log_alpha,
+    int64_t BLANK,
+    bool zero_infinity) {
   constexpr scalar_t neginf = -INFINITY;
   using target_t =
       typename std::conditional<target_scalar_type == kInt, int, int64_t>::type;
@@ -715,10 +727,10 @@ Tensor imputer_loss_backward_gpu_template(
       at::tensor(input_lengths, targets.options().dtype(kLong));
   tg_batch_offsets = tg_batch_offsets.cuda();
 
-  Tensor log_beta = at::empty_like(log_alpha, LEGACY_CONTIGUOUS_MEMORY_FORMAT);
+  torch::Tensor log_beta = at::empty_like(log_alpha, LEGACY_CONTIGUOUS_MEMORY_FORMAT);
   log_beta.fill_(neginf);
 
-  Tensor grad =
+  torch::Tensor grad =
       at::full_like(log_probs, neginf,
                     LEGACY_CONTIGUOUS_MEMORY_FORMAT); // initialization for
                                                       // log(sum (alpha beta))
@@ -750,7 +762,7 @@ Tensor imputer_loss_backward_gpu_template(
             force_emits.stride(0), log_beta.stride(0), log_beta.stride(1),
             log_beta.stride(2), tg_batch_offsets.data_ptr<int64_t>(),
             tg_target_stride, batch_size, BLANK);
-    THCudaCheck(cudaGetLastError()); // catch launch errors
+    C10_CUDA_CHECK(cudaGetLastError()); // catch launch errors
   }
 
   // Very crude heuristic for what is a small problem., based on linearly
@@ -814,7 +826,7 @@ Tensor imputer_loss_backward_gpu_template(
             log_beta.stride(1), log_beta.stride(2),
             tg_batch_offsets.data_ptr<int64_t>(), tg_target_stride, batch_size,
             num_labels, BLANK, zero_infinity);
-    THCudaCheck(cudaGetLastError()); // catch launch errors
+    C10_CUDA_CHECK(cudaGetLastError()); // catch launch errors
   } else {                           // small problem, use naive algorithm
     // Still no block/grid configuration guru...
     int threads_input = max_threads;
@@ -839,7 +851,7 @@ Tensor imputer_loss_backward_gpu_template(
             log_beta.stride(1), log_beta.stride(2),
             tg_batch_offsets.data_ptr<int64_t>(), tg_target_stride, batch_size,
             num_labels, BLANK, zero_infinity);
-    THCudaCheck(cudaGetLastError()); // catch launch errors
+    C10_CUDA_CHECK(cudaGetLastError()); // catch launch errors
   }
 
   // zero those invalid graident elements due to padding
@@ -856,16 +868,21 @@ Tensor imputer_loss_backward_gpu_template(
         grad.data_ptr<scalar_t>(), input_lengths_t.data_ptr<int64_t>(),
         grad.stride(0), grad.stride(1), grad.stride(2), grad.size(0),
         grad.size(1), grad.size(2));
-    THCudaCheck(cudaGetLastError());
+    C10_CUDA_CHECK(cudaGetLastError());
   }
 
   return grad;
 }
 
-std::tuple<Tensor, Tensor>
-imputer_loss_op(const Tensor &log_probs, const Tensor &targets,
-                const Tensor &force_emits, IntArrayRef input_lengths,
-                IntArrayRef target_lengths, int64_t BLANK, bool zero_infinity) {
+std::tuple<torch::Tensor, torch::Tensor>
+imputer_loss_op(
+    const torch::Tensor &log_probs,
+    const torch::Tensor &targets,
+    const torch::Tensor &force_emits,
+    at::IntArrayRef input_lengths,
+    at::IntArrayRef target_lengths,
+    int64_t BLANK,
+    bool zero_infinity) {
   (void)zero_infinity; // only used for backward
   return AT_DISPATCH_FLOATING_TYPES(
       log_probs.scalar_type(), "imputer_loss_cuda", [&] {
@@ -881,11 +898,17 @@ imputer_loss_op(const Tensor &log_probs, const Tensor &targets,
       });
 }
 
-Tensor imputer_loss_backward_op(
-    const Tensor &grad, const Tensor &log_probs, const Tensor &targets,
-    const Tensor &force_emits, IntArrayRef input_lengths,
-    IntArrayRef target_lengths, const Tensor &neg_log_likelihood,
-    const Tensor &log_alpha, int64_t BLANK, bool zero_infinity) {
+torch::Tensor imputer_loss_backward_op(
+    const torch::Tensor &grad,
+    const torch::Tensor &log_probs,
+    const torch::Tensor &targets,
+    const torch::Tensor &force_emits,
+    at::IntArrayRef input_lengths,
+    at::IntArrayRef target_lengths,
+    const torch::Tensor &neg_log_likelihood,
+    const torch::Tensor &log_alpha,
+    int64_t BLANK,
+    bool zero_infinity) {
   return AT_DISPATCH_FLOATING_TYPES(
       log_probs.scalar_type(), "imputer_loss_backward_cuda", [&] {
         if (targets.scalar_type() == kLong) {

@@ -1,4 +1,16 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
+from torch.utils import cpp_extension
+
+extensions = [
+    cpp_extension.CUDAExtension(
+        "torch_imputer",
+        sources=[
+            "torch_imputer/best_alignment_kernel.cu",
+            "torch_imputer/imputer_kernel.cu",
+            "torch_imputer/imputer.cpp",
+        ],
+    )
+]
 
 setup(
     name="torch_imputer",
@@ -10,4 +22,6 @@ setup(
     license="MIT",
     python_requires=">=3.6",
     packages=find_packages(exclude=["example"]),
+    ext_modules=extensions,
+    cmdclass={"build_ext": cpp_extension.BuildExtension},
 )

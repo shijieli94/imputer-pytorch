@@ -1,21 +1,14 @@
-import os
-import math
-
 import torch
-from torch import nn
-from torch.nn import functional as F
+import torch.nn as nn
+import torch_imputer
 from torch.autograd import Function
-from torch.utils.cpp_extension import load
 
-module_path = os.path.dirname(__file__)
-imputer = load(
-    "imputer_fn",
-    sources=[
-        os.path.join(module_path, "imputer.cpp"),
-        os.path.join(module_path, "imputer.cu"),
-        os.path.join(module_path, "best_alignment.cu"),
-    ],
-)
+__all__ = [
+    "imputer_loss",
+    "ImputerLoss",
+    "ctc_decode",
+    "best_alignment",
+]
 
 
 class ImputerLossFunction(Function):
@@ -33,7 +26,7 @@ class ImputerLossFunction(Function):
         input_lengths = input_lengths.to("cpu", dtype=torch.int64)
         target_lengths = target_lengths.to("cpu", dtype=torch.int64)
 
-        loss, log_alpha = imputer.imputer_loss(
+        loss, log_alpha = torch_imputer.imputer_loss(
             log_prob,
             targets,
             force_emits,
@@ -59,13 +52,19 @@ class ImputerLossFunction(Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        log_prob, targets, force_emits, input_lengths, target_lengths, loss, log_alpha = (
-            ctx.saved_tensors
-        )
+        (
+            log_prob,
+            targets,
+            force_emits,
+            input_lengths,
+            target_lengths,
+            loss,
+            log_alpha,
+        ) = ctx.saved_tensors
         blank = ctx.blank
         zero_infinity = ctx.zero_infinity
 
-        grad_input = imputer.imputer_loss_backward(
+        grad_input = torch_imputer.imputer_loss_backward(
             grad_output,
             log_prob,
             targets,
@@ -117,6 +116,8 @@ def imputer_loss(
                               target sequences using input sequences
                               (e.g. input sequences are shorter than target sequences)
     """
+    if log_prob.size(0) == targets.size(0):
+        log_prob = log_prob.transpose(0, 1)
 
     loss = imputer_loss_fn(
         log_prob,
@@ -304,7 +305,10 @@ def best_alignment(
     Output:
         best_aligns (List[List[int]]): sequence of ctc states that have maximum probabilties
                                        given log probabilties, and compatible with target sequences"""
-    nll, log_alpha, alignment = imputer.best_alignment(
+    if log_prob.size(0) == targets.size(0):
+        log_prob = log_prob.transpose(0, 1)
+
+    nll, log_alpha, alignment = torch_imputer.best_alignment(
         log_prob, targets, input_lengths, target_lengths, blank, zero_infinity
     )
 

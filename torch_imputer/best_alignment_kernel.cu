@@ -21,6 +21,8 @@
 #include <numeric>
 #include <type_traits>
 
+#include "imputer.h"
+
 using namespace at;
 
 // this ad-hoc converts from targets (l in [1]) to augmented targets (l' in [1])
@@ -210,10 +212,13 @@ C10_LAUNCH_BOUNDS_2((std::is_same<scalar_t, float>::value ? 1024 : 896), 1)
 // (currently, might change to (log_alpha+log_beta) to be passed to the
 // backward. The dispatch function will only return the loss.
 template <typename scalar_t, ScalarType target_scalar_type>
-std::tuple<Tensor, Tensor, Tensor>
-best_alignment_gpu_template(const Tensor &log_probs, const Tensor &targets,
-                            IntArrayRef input_lengths,
-                            IntArrayRef target_lengths, int64_t BLANK) {
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
+best_alignment_gpu_template(
+    const torch::Tensor &log_probs,
+    const torch::Tensor &targets,
+    at::IntArrayRef input_lengths,
+    at::IntArrayRef target_lengths,
+    int64_t BLANK) {
   // log_probs: input_len x batch_size x num_labels
   // targets [int64]: batch_size x target_length OR sum(target_lengths)
   CheckedFrom c = "ctc_alignment_gpu";
@@ -283,11 +288,11 @@ best_alignment_gpu_template(const Tensor &log_probs, const Tensor &targets,
       at::tensor(input_lengths, targets.options().dtype(kLong));
   tg_batch_offsets = tg_batch_offsets.cuda();
 
-  Tensor log_alpha =
+  torch::Tensor log_alpha =
       at::empty({batch_size, log_probs.size(0), 2 * max_target_length + 1},
                 log_probs.options());
-  Tensor paths = at::full_like(log_alpha, -1, log_alpha.options().dtype(kLong));
-  Tensor neg_log_likelihood = at::empty({batch_size}, log_probs.options());
+  torch::Tensor paths = at::full_like(log_alpha, -1, log_alpha.options().dtype(kLong));
+  torch::Tensor neg_log_likelihood = at::empty({batch_size}, log_probs.options());
 
   // Very likely, we could be more clever here, e.g. learning (or genralizing
   // and reusing) from SoftMax.cu...
@@ -320,10 +325,14 @@ best_alignment_gpu_template(const Tensor &log_probs, const Tensor &targets,
   return std::make_tuple(neg_log_likelihood, log_alpha, paths);
 }
 
-std::tuple<Tensor, Tensor, Tensor>
-best_alignment_op(const Tensor &log_probs, const Tensor &targets,
-                  IntArrayRef input_lengths, IntArrayRef target_lengths,
-                  int64_t BLANK, bool zero_infinity) {
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
+best_alignment_op(
+    const torch::Tensor &log_probs,
+    const torch::Tensor &targets,
+    at::IntArrayRef input_lengths,
+    at::IntArrayRef target_lengths,
+    int64_t BLANK,
+    bool zero_infinity) {
   (void)zero_infinity; // only used for backward
   return AT_DISPATCH_FLOATING_TYPES(
       log_probs.scalar_type(), "ctc_alignment_cuda", [&] {
